@@ -25,6 +25,10 @@ if sap_file and plm_file:
         missing_in_sap = plm[~plm["Material"].isin(sap["Material"])]
         missing_in_plm = sap[~sap["Material"].isin(plm["Material"])]
 
+        # --- Compare consumption for direct matches ---
+        if not direct_matches.empty:
+            direct_matches["ConsumptionDiff"] = direct_matches["Qty(Cons.)"] - direct_matches["Comp.Qty."]
+
         # --- Step 2: Build Combined Column for PLM ---
         plm["Combined"] = (
             plm["Material"].astype(str).str.strip() + " " +
@@ -83,7 +87,7 @@ if sap_file and plm_file:
 
         # --- Preview ---
         st.subheader("🔍 Preview of Results")
-        tab1, tab2, tab3, tab4 = st.tabs(["Direct Matches", "PLM Not in SAP", "SAP Not in PLM", "Fuzzy Matches"])
+        tab1, tab2, tab3, tab4 = st.tabs(["Direct Matches", "PLM Not in SAP", "SAP Not in PLM", "70% or More Matches"])
         with tab1:
             st.dataframe(direct_matches)
         with tab2:
