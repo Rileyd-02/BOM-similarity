@@ -2,5 +2,6 @@ streamlit
 pandas
 openpyxl
 plotly
-thefuzz
 xlsxwriter
+thefuzz
+python-Levenshtein
