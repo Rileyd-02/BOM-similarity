@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import difflib
 from io import BytesIO
-from openpyxl import load_workbook
 
 # --- Streamlit Config ---
 st.set_page_config(layout="wide", page_title="SAP & PLM BOM Validation")
@@ -26,7 +25,7 @@ if sap_file and plm_file:
         missing_in_sap = plm[~plm["Material"].isin(sap["Material"])]
         missing_in_plm = sap[~sap["Material"].isin(plm["Material"])]
 
-        # --- Step 2: Fuzzy Matching (difflib) ---
+        # --- Step 2: Build Combined Column for PLM ---
         plm["Combined"] = (
             plm["Material"].astype(str).str.strip() + " " +
             plm["Vendor Reference"].astype(str).str.strip() + " " +
@@ -34,19 +33,31 @@ if sap_file and plm_file:
             plm["Color Name"].astype(str).str.strip()
         )
 
+        # --- Step 3: Fuzzy Matching (only for matched Material numbers) ---
         fuzzy_matches = []
-        for _, row in plm.iterrows():
+        for _, row in direct_matches.iterrows():
+            combined_val = (
+                str(row["Material"]).strip() + " " +
+                str(row["Vendor Reference_PLM"]).strip() + " " +
+                str(row["Color Reference"]).strip() + " " +
+                str(row["Color Name"]).strip()
+            )
             best_match = difflib.get_close_matches(
-                row["Combined"], sap["Material Description"], n=1, cutoff=0.7
+                combined_val, sap["Material Description"], n=1, cutoff=0.7
             )
             if best_match:
                 sap_row = sap[sap["Material Description"] == best_match[0]].iloc[0]
                 fuzzy_matches.append({
-                    "Combined_PLMMeta": row["Combined"],
+                    "Material": row["Material"],
+                    "Combined_PLMMeta": combined_val,
                     "MaterialDescription_SAP": best_match[0],
-                    "Qty(Cons.)": row.get("Qty(Cons.)", 0),
-                    "Comp.Qty.": sap_row.get("Comp.Qty.", 0),
-                    "ConsumptionDiff": row.get("Qty(Cons.)", 0) - sap_row.get("Comp.Qty.", 0)
+                    "Qty(Cons.)_PLM": row.get("Qty(Cons.)", 0),
+                    "Comp.Qty._SAP": sap_row.get("Comp.Qty.", 0),
+                    "ConsumptionDiff": row.get("Qty(Cons.)", 0) - sap_row.get("Comp.Qty.", 0),
+                    "Vendor Reference_PLM": row.get("Vendor Reference_PLM", ""),
+                    "Vendor Reference_SAP": sap_row.get("Vendor Reference", ""),
+                    "Color Reference_PLM": row.get("Color Reference", ""),
+                    "Comp. Colour_SAP": sap_row.get("Comp. Colour", "")
                 })
 
         fuzzy_df = pd.DataFrame(fuzzy_matches)
