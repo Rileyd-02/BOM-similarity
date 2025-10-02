@@ -32,6 +32,12 @@ if sap_file and plm_file:
             direct_matches["ConsumptionDiff"] = (
                 direct_matches["Qty(Cons.)"] - direct_matches["Comp.Qty."]
             )
+            # Add DifferenceFlag
+            direct_matches["DifferenceFlag"] = direct_matches.apply(
+                lambda r: "SAP Higher" if r["Comp.Qty."] > r["Qty(Cons.)"] else "OK",
+                axis=1
+            )
+            # Sort by largest absolute difference
             direct_matches = direct_matches.reindex(
                 direct_matches["ConsumptionDiff"].abs().sort_values(ascending=False).index
             )
@@ -58,13 +64,16 @@ if sap_file and plm_file:
             )
             if best_match:
                 sap_row = sap[sap["Material Description"] == best_match[0]].iloc[0]
+                plm_val = row.get("Qty(Cons.)", 0)
+                sap_val = sap_row.get("Comp.Qty.", 0)
                 fuzzy_matches.append({
                     "Material": row["Material"],
                     "Combined_PLMMeta": combined_val,
                     "MaterialDescription_SAP": best_match[0],
-                    "Qty(Cons.)_PLM": row.get("Qty(Cons.)", 0),
-                    "Comp.Qty._SAP": sap_row.get("Comp.Qty.", 0),
-                    "ConsumptionDiff": row.get("Qty(Cons.)", 0) - sap_row.get("Comp.Qty.", 0),
+                    "Qty(Cons.)_PLM": plm_val,
+                    "Comp.Qty._SAP": sap_val,
+                    "ConsumptionDiff": plm_val - sap_val,
+                    "DifferenceFlag": "SAP Higher" if sap_val > plm_val else "OK",
                     "Vendor Reference_PLM": row.get("Vendor Reference_PLM", ""),
                     "Vendor Reference_SAP": sap_row.get("Vendor Reference", ""),
                     "Color Reference_PLM": row.get("Color Reference", ""),
@@ -90,10 +99,11 @@ if sap_file and plm_file:
         # --- Apply Conditional Formatting ---
         wb = load_workbook(output)
 
-        def apply_coloring(ws, headers, plm_col_name, sap_col_name, diff_col_name):
+        def apply_coloring(ws, headers, plm_col_name, sap_col_name, diff_col_name, flag_col_name):
             plm_col = headers.index(plm_col_name) + 1
             sap_col = headers.index(sap_col_name) + 1
             diff_col = headers.index(diff_col_name) + 1
+            flag_col = headers.index(flag_col_name) + 1
 
             green_fill = PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid")
             red_fill = PatternFill(start_color="FF6666", end_color="FF6666", fill_type="solid")
@@ -101,29 +111,49 @@ if sap_file and plm_file:
             for row in range(2, ws.max_row + 1):
                 plm_val = ws.cell(row=row, column=plm_col).value
                 sap_val = ws.cell(row=row, column=sap_col).value
-                if plm_val == sap_val:
-                    ws.cell(row=row, column=plm_col).fill = green_fill
-                    ws.cell(row=row, column=sap_col).fill = green_fill
-                    ws.cell(row=row, column=diff_col).fill = green_fill
-                else:
-                    ws.cell(row=row, column=plm_col).fill = red_fill
-                    ws.cell(row=row, column=sap_col).fill = red_fill
-                    ws.cell(row=row, column=diff_col).fill = red_fill
+
+                try:
+                    plm_val = float(plm_val or 0)
+                    sap_val = float(sap_val or 0)
+                except ValueError:
+                    continue  # skip rows with invalid data
+
+                if sap_val > plm_val:  # ❌ SAP higher → Red
+                    fill = red_fill
+                else:  # ✅ PLM ≥ SAP → Green
+                    fill = green_fill
+
+                ws.cell(row=row, column=plm_col).fill = fill
+                ws.cell(row=row, column=sap_col).fill = fill
+                ws.cell(row=row, column=diff_col).fill = fill
+                ws.cell(row=row, column=flag_col).fill = fill
 
         if "Direct_Matches" in wb.sheetnames:
             ws = wb["Direct_Matches"]
             headers = [cell.value for cell in ws[1]]
-            apply_coloring(ws, headers, "Qty(Cons.)", "Comp.Qty.", "ConsumptionDiff")
+            apply_coloring(ws, headers, "Qty(Cons.)", "Comp.Qty.", "ConsumptionDiff", "DifferenceFlag")
 
         if "70%_or_more_Matches" in wb.sheetnames:
             ws = wb["70%_or_more_Matches"]
             headers = [cell.value for cell in ws[1]]
-            apply_coloring(ws, headers, "Qty(Cons.)_PLM", "Comp.Qty._SAP", "ConsumptionDiff")
+            apply_coloring(ws, headers, "Qty(Cons.)_PLM", "Comp.Qty._SAP", "ConsumptionDiff", "DifferenceFlag")
 
         # Save updated workbook
         final_output = BytesIO()
         wb.save(final_output)
         final_output.seek(0)
+
+        # --- Summary Section ---
+        st.subheader("📊 Summary")
+        col1, col2, col3 = st.columns(3)
+
+        total_matches = len(direct_matches)
+        sap_higher_count = (direct_matches["DifferenceFlag"] == "SAP Higher").sum()
+        ok_count = (direct_matches["DifferenceFlag"] == "OK").sum()
+
+        col1.metric("Total Direct Matches", total_matches)
+        col2.metric("❌ SAP Higher", sap_higher_count)
+        col3.metric("✅ OK", ok_count)
 
         # --- Download Button ---
         st.success("✅ Comparison complete! Download the results below.")
