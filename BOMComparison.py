@@ -17,74 +17,79 @@ plm_file = st.file_uploader("Upload PLM File", type=["xlsx", "xls"])
 
 if sap_file and plm_file:
     try:
+        # --- Read sheets ---
         sap = pd.read_excel(sap_file, sheet_name="SAP")
         plm = pd.read_excel(plm_file, sheet_name="PLM")
 
+        # --- Add suffixes for clarity ---
+        sap = sap.add_suffix("_SAP")
+        plm = plm.add_suffix("_PLM")
+
         # --- Step 1: Direct Material Match ---
         direct_matches = pd.merge(
-            plm, sap, on="Material", how="inner", suffixes=("_PLM", "_SAP")
+            plm, sap, left_on="Material_PLM", right_on="Material_SAP", how="inner"
         )
-        missing_in_sap = plm[~plm["Material"].isin(sap["Material"])]
-        missing_in_plm = sap[~sap["Material"].isin(plm["Material"])]
 
-        # --- Add consumption comparison for direct matches ---
+        missing_in_sap = plm[~plm["Material_PLM"].isin(sap["Material_SAP"])]
+        missing_in_plm = sap[~sap["Material_SAP"].isin(plm["Material_PLM"])]
+
+        # --- Add consumption comparison ---
         if not direct_matches.empty:
-            direct_matches["ConsumptionDiff"] = direct_matches["Qty(Cons.)"] - direct_matches["Comp.Qty."]
-            # RED if SAP higher than PLM, GREEN if SAP <= PLM
-            direct_matches["DifferenceFlag"] = direct_matches["ConsumptionDiff"].apply(lambda x: "RED" if x < 0 else "GREEN")
+            direct_matches["ConsumptionDiff"] = direct_matches["Qty(Cons.)_PLM"] - direct_matches["Comp.Qty._SAP"]
+            direct_matches["DifferenceFlag"] = direct_matches["ConsumptionDiff"].apply(
+                lambda x: "SAP consumption is higher" if x < 0 else "OK"
+            )
             direct_matches = direct_matches.reindex(
                 direct_matches["ConsumptionDiff"].abs().sort_values(ascending=False).index
             )
 
-        # Keep only required columns for Direct Matches tab
+        # Keep only requested columns for Direct Matches tab
         direct_cols = [
-            "Material",
-            "Material Description" if "Material Description" in direct_matches.columns else "Material",
-            "Vendor Reference_PLM" if "Vendor Reference_PLM" in direct_matches.columns else "Vendor Reference",
-            "Vendor Reference_SAP" if "Vendor Reference_SAP" in direct_matches.columns else "Vendor Reference",
-            "Color Reference" if "Color Reference" in direct_matches.columns else "Color Reference",
-            "Comp. Colour" if "Comp. Colour" in direct_matches.columns else "Comp. Colour",
-            "Qty(Cons.)",
-            "Comp.Qty.",
+            "Material_PLM",
+            "Material Description_SAP",
+            "Vendor Reference_PLM",
+            "Vendor Reference_SAP",
+            "Color Reference_PLM",
+            "Comp. Colour_SAP",
+            "Qty(Cons.)_PLM",
+            "Comp.Qty._SAP",
             "ConsumptionDiff",
             "DifferenceFlag"
         ]
         direct_matches_tab = direct_matches[[col for col in direct_cols if col in direct_matches.columns]]
 
-        # --- Step 2: Build Combined Column for PLM ---
-        plm["Combined"] = (
-            plm["Material"].astype(str).str.strip() + " " +
-            plm["Vendor Reference"].astype(str).str.strip() + " " +
-            plm["Color Reference"].astype(str).str.strip() + " " +
-            plm["Color Name"].astype(str).str.strip()
+        # --- Step 2: Build Combined Column for Fuzzy Matching ---
+        plm["Combined_PLMMeta"] = (
+            plm["Material_PLM"].astype(str).str.strip() + " " +
+            plm["Vendor Reference_PLM"].astype(str).str.strip() + " " +
+            plm["Color Reference_PLM"].astype(str).str.strip()
         )
 
         # --- Step 3: Fuzzy Matching (≥70%) ---
         fuzzy_matches = []
         for _, row in direct_matches.iterrows():
             combined_val = (
-                str(row["Material"]).strip() + " " +
+                str(row["Material_PLM"]).strip() + " " +
                 str(row.get("Vendor Reference_PLM", "")).strip() + " " +
-                str(row.get("Color Reference", "")).strip() + " " +
-                str(row.get("Color Name", "")).strip()
+                str(row.get("Color Reference_PLM", "")).strip()
             )
             best_match = difflib.get_close_matches(
-                combined_val, sap.get("Material Description", []), n=1, cutoff=0.7
+                combined_val, sap.get("Material Description_SAP", []), n=1, cutoff=0.7
             )
             if best_match:
-                sap_row = sap[sap["Material Description"] == best_match[0]].iloc[0]
+                sap_row = sap[sap["Material Description_SAP"] == best_match[0]].iloc[0]
                 fuzzy_matches.append({
-                    "Material": row["Material"],
+                    "Material_PLM": row["Material_PLM"],
                     "Combined_PLMMeta": combined_val,
                     "MaterialDescription_SAP": best_match[0],
-                    "Qty(Cons.)_PLM": row.get("Qty(Cons.)", 0),
-                    "Comp.Qty._SAP": sap_row.get("Comp.Qty.", 0),
-                    "ConsumptionDiff": row.get("Qty(Cons.)", 0) - sap_row.get("Comp.Qty.", 0),
-                    "DifferenceFlag": "RED" if sap_row.get("Comp.Qty.", 0) > row.get("Qty(Cons.)", 0) else "GREEN",
+                    "Qty(Cons.)_PLM": row.get("Qty(Cons.)_PLM", 0),
+                    "Comp.Qty._SAP": sap_row.get("Comp.Qty._SAP", 0),
+                    "ConsumptionDiff": row.get("Qty(Cons.)_PLM", 0) - sap_row.get("Comp.Qty._SAP", 0),
+                    "DifferenceFlag": "SAP consumption is higher" if sap_row.get("Comp.Qty._SAP", 0) > row.get("Qty(Cons.)_PLM", 0) else "OK",
                     "Vendor Reference_PLM": row.get("Vendor Reference_PLM", ""),
-                    "Vendor Reference_SAP": sap_row.get("Vendor Reference", ""),
-                    "Color Reference_PLM": row.get("Color Reference", ""),
-                    "Comp. Colour_SAP": sap_row.get("Comp. Colour", "")
+                    "Vendor Reference_SAP": sap_row.get("Vendor Reference_SAP", ""),
+                    "Color Reference_PLM": row.get("Color Reference_PLM", ""),
+                    "Comp. Colour_SAP": sap_row.get("Comp. Colour_SAP", "")
                 })
 
         fuzzy_df = pd.DataFrame(fuzzy_matches)
@@ -93,7 +98,7 @@ if sap_file and plm_file:
                 fuzzy_df["ConsumptionDiff"].abs().sort_values(ascending=False).index
             )
 
-        # --- Summary Counts for Streamlit ---
+        # --- Summary Counts ---
         matched_count = len(direct_matches_tab) + len(fuzzy_df) if not fuzzy_df.empty else len(direct_matches_tab)
         unmatched_sap_count = len(missing_in_sap)
         unmatched_plm_count = len(missing_in_plm)
@@ -128,21 +133,16 @@ if sap_file and plm_file:
 
             for row in range(2, ws.max_row + 1):
                 flag = ws.cell(row=row, column=flag_col).value
-                fill = red_fill if flag == "RED" else green_fill
+                fill = red_fill if flag == "SAP consumption is higher" else green_fill
                 ws.cell(row=row, column=diff_col).fill = fill
                 ws.cell(row=row, column=flag_col).fill = fill
 
-        if "Direct_Matches" in wb.sheetnames:
-            ws = wb["Direct_Matches"]
-            headers = [cell.value for cell in ws[1]]
-            apply_coloring(ws, headers, "ConsumptionDiff", "DifferenceFlag")
+        for sheet_name in ["Direct_Matches", "70%_or_more_Matches"]:
+            if sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                headers = [cell.value for cell in ws[1]]
+                apply_coloring(ws, headers, "ConsumptionDiff", "DifferenceFlag")
 
-        if "70%_or_more_Matches" in wb.sheetnames:
-            ws = wb["70%_or_more_Matches"]
-            headers = [cell.value for cell in ws[1]]
-            apply_coloring(ws, headers, "ConsumptionDiff", "DifferenceFlag")
-
-        # Save workbook with formatting
         final_output = BytesIO()
         wb.save(final_output)
         final_output.seek(0)
