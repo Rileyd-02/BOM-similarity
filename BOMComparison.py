@@ -17,8 +17,8 @@ plm_file = st.file_uploader("Upload PLM File", type=["xlsx", "xls"])
 
 if sap_file and plm_file:
     try:
-        sap = pd.read_excel(sap_file, sheet_name="Sheet1")
-        plm = pd.read_excel(plm_file, sheet_name="Sheet1")
+        sap = pd.read_excel(sap_file, sheet_name="SAP")
+        plm = pd.read_excel(plm_file, sheet_name="PLM")
 
         # --- Step 1: Direct Material Match ---
         direct_matches = pd.merge(
@@ -180,6 +180,7 @@ if sap_file and plm_file:
         st.error(f"❌ Error while processing: {e}")
 else:
     st.info("⬆️ Please upload both SAP and PLM Excel files to begin.")
+
 
 
 
