@@ -30,10 +30,26 @@ if sap_file and plm_file:
         # --- Add consumption comparison for direct matches ---
         if not direct_matches.empty:
             direct_matches["ConsumptionDiff"] = direct_matches["Qty(Cons.)"] - direct_matches["Comp.Qty."]
+            # RED if SAP higher than PLM, GREEN if SAP <= PLM
             direct_matches["DifferenceFlag"] = direct_matches["ConsumptionDiff"].apply(lambda x: "RED" if x < 0 else "GREEN")
             direct_matches = direct_matches.reindex(
                 direct_matches["ConsumptionDiff"].abs().sort_values(ascending=False).index
             )
+
+        # Keep only required columns for Direct Matches tab
+        direct_cols = [
+            "Material",
+            "Material Description" if "Material Description" in direct_matches.columns else "Material",
+            "Vendor Reference_PLM" if "Vendor Reference_PLM" in direct_matches.columns else "Vendor Reference",
+            "Vendor Reference_SAP" if "Vendor Reference_SAP" in direct_matches.columns else "Vendor Reference",
+            "Color Reference" if "Color Reference" in direct_matches.columns else "Color Reference",
+            "Comp. Colour" if "Comp. Colour" in direct_matches.columns else "Comp. Colour",
+            "Qty(Cons.)",
+            "Comp.Qty.",
+            "ConsumptionDiff",
+            "DifferenceFlag"
+        ]
+        direct_matches_tab = direct_matches[[col for col in direct_cols if col in direct_matches.columns]]
 
         # --- Step 2: Build Combined Column for PLM ---
         plm["Combined"] = (
@@ -53,7 +69,7 @@ if sap_file and plm_file:
                 str(row.get("Color Name", "")).strip()
             )
             best_match = difflib.get_close_matches(
-                combined_val, sap["Material Description"], n=1, cutoff=0.7
+                combined_val, sap.get("Material Description", []), n=1, cutoff=0.7
             )
             if best_match:
                 sap_row = sap[sap["Material Description"] == best_match[0]].iloc[0]
@@ -78,7 +94,7 @@ if sap_file and plm_file:
             )
 
         # --- Summary Counts for Streamlit ---
-        matched_count = len(direct_matches) + len(fuzzy_df) if not fuzzy_df.empty else len(direct_matches)
+        matched_count = len(direct_matches_tab) + len(fuzzy_df) if not fuzzy_df.empty else len(direct_matches_tab)
         unmatched_sap_count = len(missing_in_sap)
         unmatched_plm_count = len(missing_in_plm)
 
@@ -91,7 +107,7 @@ if sap_file and plm_file:
         # --- Save Results to Excel ---
         output = BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            direct_matches.to_excel(writer, sheet_name="Direct_Matches", index=False)
+            direct_matches_tab.to_excel(writer, sheet_name="Direct_Matches", index=False)
             missing_in_sap.to_excel(writer, sheet_name="PLM_Not_in_SAP", index=False)
             missing_in_plm.to_excel(writer, sheet_name="SAP_Not_in_PLM", index=False)
             if not fuzzy_df.empty:
@@ -101,11 +117,9 @@ if sap_file and plm_file:
         # --- Conditional Formatting ---
         wb = load_workbook(output)
 
-        def apply_coloring(ws, headers, plm_col_name, sap_col_name, diff_col_name, flag_col_name):
-            if not all(col in headers for col in [plm_col_name, sap_col_name, diff_col_name, flag_col_name]):
+        def apply_coloring(ws, headers, diff_col_name, flag_col_name):
+            if not all(col in headers for col in [diff_col_name, flag_col_name]):
                 return
-            plm_col = headers.index(plm_col_name) + 1
-            sap_col = headers.index(sap_col_name) + 1
             diff_col = headers.index(diff_col_name) + 1
             flag_col = headers.index(flag_col_name) + 1
 
@@ -115,20 +129,18 @@ if sap_file and plm_file:
             for row in range(2, ws.max_row + 1):
                 flag = ws.cell(row=row, column=flag_col).value
                 fill = red_fill if flag == "RED" else green_fill
-                ws.cell(row=row, column=plm_col).fill = fill
-                ws.cell(row=row, column=sap_col).fill = fill
                 ws.cell(row=row, column=diff_col).fill = fill
                 ws.cell(row=row, column=flag_col).fill = fill
 
         if "Direct_Matches" in wb.sheetnames:
             ws = wb["Direct_Matches"]
             headers = [cell.value for cell in ws[1]]
-            apply_coloring(ws, headers, "Qty(Cons.)", "Comp.Qty.", "ConsumptionDiff", "DifferenceFlag")
+            apply_coloring(ws, headers, "ConsumptionDiff", "DifferenceFlag")
 
         if "70%_or_more_Matches" in wb.sheetnames:
             ws = wb["70%_or_more_Matches"]
             headers = [cell.value for cell in ws[1]]
-            apply_coloring(ws, headers, "Qty(Cons.)_PLM", "Comp.Qty._SAP", "ConsumptionDiff", "DifferenceFlag")
+            apply_coloring(ws, headers, "ConsumptionDiff", "DifferenceFlag")
 
         # Save workbook with formatting
         final_output = BytesIO()
@@ -148,7 +160,7 @@ if sap_file and plm_file:
         st.subheader("🔍 Preview of Results")
         tab1, tab2, tab3, tab4 = st.tabs(["Direct Matches", "PLM Not in SAP", "SAP Not in PLM", "70% or more Matches"])
         with tab1:
-            st.dataframe(direct_matches)
+            st.dataframe(direct_matches_tab)
         with tab2:
             st.dataframe(missing_in_sap)
         with tab3:
