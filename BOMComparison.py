@@ -29,9 +29,7 @@ if sap_file and plm_file:
 
         # --- Add consumption comparison for direct matches ---
         if not direct_matches.empty:
-            direct_matches["ConsumptionDiff"] = (
-                direct_matches["Qty(Cons.)"] - direct_matches["Comp.Qty."]
-            )
+            direct_matches["ConsumptionDiff"] = direct_matches["Qty(Cons.)"] - direct_matches["Comp.Qty."]
             # Add DifferenceFlag
             direct_matches["DifferenceFlag"] = direct_matches.apply(
                 lambda r: "SAP Higher" if r["Comp.Qty."] > r["Qty(Cons.)"] else "OK",
@@ -116,18 +114,15 @@ if sap_file and plm_file:
                     plm_val = float(plm_val or 0)
                     sap_val = float(sap_val or 0)
                 except ValueError:
-                    continue  # skip rows with invalid data
+                    continue  # skip invalid rows
 
-                if sap_val > plm_val:  # ❌ SAP higher → Red
-                    fill = red_fill
-                else:  # ✅ PLM ≥ SAP → Green
-                    fill = green_fill
-
+                fill = red_fill if sap_val > plm_val else green_fill
                 ws.cell(row=row, column=plm_col).fill = fill
                 ws.cell(row=row, column=sap_col).fill = fill
                 ws.cell(row=row, column=diff_col).fill = fill
                 ws.cell(row=row, column=flag_col).fill = fill
 
+        # Apply formatting per sheet
         if "Direct_Matches" in wb.sheetnames:
             ws = wb["Direct_Matches"]
             headers = [cell.value for cell in ws[1]]
@@ -180,7 +175,3 @@ if sap_file and plm_file:
         st.error(f"❌ Error while processing: {e}")
 else:
     st.info("⬆️ Please upload both SAP and PLM Excel files to begin.")
-
-
-
-
